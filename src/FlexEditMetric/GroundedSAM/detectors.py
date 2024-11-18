@@ -3,8 +3,8 @@ from typing import Any, List, Dict, Optional, Union, Tuple
 import torch
 from torchvision.transforms.functional import pil_to_tensor
 from transformers import AutoModelForMaskGeneration, AutoProcessor, pipeline
-from MIMiC.utils import DetectionResult, get_boxes, refine_masks, load_image
-from MIMiC.utils.utils import preprocess_caption, DetectionResult, BoundingBox
+from FlexEditMetric.utils import DetectionResult, get_boxes, refine_masks, load_image
+from FlexEditMetric.utils.utils import preprocess_caption, DetectionResult, BoundingBox
 from transformers import GroundingDinoProcessor
 from transformers import GroundingDinoForObjectDetection 
 import numpy as np

@@ -9,7 +9,7 @@ import plotly.express as px
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 
-from MIMiC.utils import DetectionResult
+from FlexEditMetric.utils import DetectionResult
 import matplotlib
 matplotlib.use('Agg')
 
