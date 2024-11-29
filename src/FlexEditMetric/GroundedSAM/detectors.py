@@ -1,7 +1,7 @@
 from PIL import Image
 from typing import Any, List, Dict, Optional, Union, Tuple
 import torch
-from torchvision.transforms.functional import pil_to_tensor
+from torchvision.transforms.functional import pil_to_tensor, to_pil_image
 from transformers import AutoModelForMaskGeneration, AutoProcessor, pipeline
 from FlexEditMetric.utils import DetectionResult, get_boxes, refine_masks, load_image
 from FlexEditMetric.utils.utils import preprocess_caption, DetectionResult, BoundingBox
@@ -17,6 +17,7 @@ from flair.models import SequenceTagger
 # load metrics
 from torchmetrics.image import PeakSignalNoiseRatio, StructuralSimilarityIndexMeasure
 from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
+from torch.nn.functional import mse_loss
 
 class GroundedSAM:
     def __init__(self):
@@ -28,6 +29,7 @@ class GroundedSAM:
         self.psnr_metric_model = PeakSignalNoiseRatio(data_range=1.0).to(self.device)
         self.ssim_metric_model = StructuralSimilarityIndexMeasure(data_range=1.0).to(self.device)
         self.lpips_metric_model = LearnedPerceptualImagePatchSimilarity(net_type="squeeze").to(self.device)
+        self.mse_loss = mse_loss
         
         self.processor = GroundingDinoProcessor.from_pretrained("IDEA-Research/grounding-dino-base")
         # Load the model and generate the grounding
@@ -94,19 +96,28 @@ class GroundedSAM:
         edit_segmentation = self.segment(edit, edit_detection)
         segmentations = source_segmentation + edit_segmentation
 
-        joint_segmentation = np.zeros(segmentations[0].mask.shape, dtype=np.uint8)
+        joint_segmentation = np.zeros((source.size[1], source.size[0]), dtype=np.uint8)
+
         for segmentation in segmentations:
             joint_segmentation += segmentation.mask
         joint_segmentation = joint_segmentation.clip(0, 1)
         unedited_a = pil_to_tensor(source)*torch.from_numpy(1-joint_segmentation)
         unedited_b = pil_to_tensor(edit)*torch.from_numpy(1-joint_segmentation)
+
+        unedited_a_pil = to_pil_image(unedited_a)
+        unedited_b_pil = to_pil_image(unedited_b)
+        unedited_a_sam = get_sam_embeddings(unedited_a_pil)
+        unedited_b_sam = get_sam_embeddings(unedited_b_pil)
+        score_sam = self.mse_loss(unedited_a_sam, unedited_b_sam).cpu().item()*100
+
         unedited_a = unedited_a.unsqueeze(0).to(dtype=torch.float, device=self.device)/255.0
         unedited_b = unedited_b.unsqueeze(0).to(dtype=torch.float, device=self.device)/255.0
 
         score_psnr = self.psnr_metric_model(unedited_a, unedited_b).cpu().item()
         score_ssim = self.ssim_metric_model(unedited_a, unedited_b).cpu().item()
         score_lpips = self.lpips_metric_model(unedited_a * 2 - 1, unedited_b * 2 - 1).cpu().item()
-        return {"PSNR": score_psnr, "SSIM": score_ssim, "LPIPS": score_lpips}
+
+        return {"PSNR": score_psnr, "SSIM": score_ssim, "LPIPS": score_lpips, 'SAM': score_sam}
 
 def detect(
     image: Image.Image,
@@ -128,6 +139,18 @@ def detect(
 
     return results
 
+def get_sam_embeddings(image: Image.Image,
+                       segmenter_id: Optional[str] = None):
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    segmenter_id = segmenter_id if segmenter_id is not None else "facebook/sam-vit-base"
+
+    segmentator = AutoModelForMaskGeneration.from_pretrained(segmenter_id).to(device)
+    processor = AutoProcessor.from_pretrained(segmenter_id)
+    inputs = processor(images=image)
+    pixel_values = torch.stack([torch.tensor(pixel_values, dtype=torch.float32, device=device) for pixel_values in inputs['pixel_values']])
+    return segmentator.get_image_embeddings(pixel_values)
+
+
 def segment(
     image: Image.Image,
     detection_results: List[Dict[str, Any]],
@@ -145,8 +168,9 @@ def segment(
 
     boxes = get_boxes(detection_results)
     # boxes = [box for box in detection_results]
-    if len(boxes) == 0:
+    if len(boxes[0]) == 0:
         return []
+
     inputs = processor(images=image, input_boxes=boxes, return_tensors="pt").to(device)
 
     outputs = segmentator(**inputs)

@@ -8,7 +8,7 @@ import requests
 import numpy as np
 from PIL import Image
 
-from FlexEditMetric.GroundedSAM import GroundedSAM
+from FlexEditMetric.GroundedSAM import GroundedSAM, get_sam_embeddings
 
 from tqdm import tqdm
 
@@ -36,7 +36,7 @@ if __name__ == "__main__":
     dataset = load_dataset('parquet', data_files=[datapath+filename for filename in list_files]).shuffle()
     num_samples = 101
 
-    scores = {'PSNR': [], 'SSIM': [], 'LPIPS': []}
+    scores = {'PSNR': [], 'SSIM': [], 'LPIPS': [], 'SAM': []}
     GS = GroundedSAM()
 
     for data_i, data in tqdm(enumerate(dataset['train'])):
@@ -54,6 +54,8 @@ if __name__ == "__main__":
         scores['PSNR'].append(results['PSNR'])
         scores['SSIM'].append(results['SSIM'])
         scores['LPIPS'].append(results['LPIPS'])
+        scores['SAM'].append(results['SAM'])
+        
         print_result(results)
 
         num_samples -= 1
